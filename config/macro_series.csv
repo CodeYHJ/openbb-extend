@@ -1,0 +1,4 @@
+series_id,description,provider
+CPIAUCSL,Consumer Price Index,fred
+GDP,Gross Domestic Product,fred
+UNRATE,Unemployment Rate,fred

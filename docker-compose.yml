@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  collector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quant_collector
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    volumes:
+      - ./scripts:/app/scripts
+      - ./config:/app/config
+    environment:
+      - DB_HOST=timescaledb
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASS=quant_password
+      - DB_NAME=quant_data
+      - OPENBB_VERSION=4.6.0
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  timescaledb:
+    image: timescale/timescaledb:2.25.0-pg18
+    container_name: timescaledb_core
+    restart: unless-stopped
+    shm_size: 1g
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=quant_password
+      - POSTGRES_DB=quant_data
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+volumes:
+  db_data:
