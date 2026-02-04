@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   collector:
@@ -20,6 +20,7 @@ services:
       - DB_PASS=quant_password
       - DB_NAME=quant_data
       - OPENBB_VERSION=4.6.0
+      - FRED_API_KEY=your_fred_api_key
     logging:
       driver: "json-file"
       options:
