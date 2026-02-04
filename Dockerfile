@@ -2,7 +2,9 @@ FROM python:3.11-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    # ⚠️【新增】关键修正：将 /app 加入 Python 搜索路径
+    PYTHONPATH="/app"
 
 ARG OPENBB_VERSION=4.6.0
 
