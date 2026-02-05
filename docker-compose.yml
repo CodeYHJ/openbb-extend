@@ -21,6 +21,7 @@ services:
       - DB_NAME=quant_data
       - OPENBB_VERSION=4.6.0
       - FRED_API_KEY=your_fred_api_key
+      - TZ=Asia/Shanghai
     logging:
       driver: "json-file"
       options:
@@ -36,10 +37,11 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=quant_password
       - POSTGRES_DB=quant_data
+      - TZ=Asia/Shanghai
     ports:
       - "5432:5432"
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - ./db_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -50,6 +52,3 @@ services:
       options:
         max-size: "20m"
         max-file: "3"
-
-volumes:
-  db_data:

@@ -3,111 +3,130 @@ import pandas as pd
 import os
 import time
 import random
-import yfinance as yf # 直接引入 yfinance 做底层测试
-from openbb import obb
+import yfinance as yf
 from scripts.database import get_engine, ensure_hypertable
 
 logger = logging.getLogger("quant.task.stocks")
 CONFIG_FILE = "/app/config/stock_tickers.csv"
 
+BATCH_SIZE = 20
+MIN_SLEEP = 10
+MAX_SLEEP = 20
+RETRIES = 3
+RETRY_DELAY = 5
+
 def check_yfinance_status():
-    """
-    🔍 连通性测试 (金丝雀测试)
-    尝试下载 SPY (标普500 ETF) 的 1 天数据，检测 IP 是否被 Yahoo 拉黑
-    """
-    canary = "SPY"
-    logger.info(f"🔍 [自检] 正在测试 Yahoo Finance 连接 (Target: {canary})...")
-    
     try:
-        # 使用 yfinance 原生库测试，不经 OpenBB 包装，报错更直观
-        # period="1d" 极简数据量
-        df = yf.download(canary, period="1d", progress=False, auto_adjust=True)
+        logger.info("🔍 [自检] 正在测试 Yahoo Finance 连接...")
+        df = yf.download("SPY", period="1d", progress=False, auto_adjust=True)
         
         if not df.empty:
-            logger.info("✅ [自检] Yahoo Finance 连接正常！IP 未被封锁。")
+            logger.info("✅ [自检] 连接成功，数据正常。")
             return True
         else:
-            logger.error("❌ [自检] 返回数据为空。可能是 IP 被临时限制，或网络不通。")
+            errors = getattr(yf.shared, '_ERRORS', {})
+            logger.error(f"❌ [自检] 下载失败。错误详情: {errors}")
             return False
             
     except Exception as e:
-        err_msg = str(e)
-        if "Rate limited" in err_msg or "Too Many Requests" in err_msg:
-            logger.critical("⛔ [自检] 检测到 Rate Limit！IP 已被 Yahoo 封锁。任务终止。")
-        else:
-            logger.error(f"❌ [自检] 连接异常: {err_msg}")
+        logger.error(f"❌ [自检] 代码执行异常: {e}")
         return False
 
+def process_batch(chunk_tickers, engine, table_name):
+    if not chunk_tickers: return
+
+    tickers_str = " ".join(chunk_tickers)
+    
+    for attempt in range(RETRIES):
+        try:
+            data = yf.download(
+                tickers_str, 
+                period="1d", 
+                group_by='ticker', 
+                auto_adjust=True,
+                progress=False, 
+                threads=False
+            )
+
+            if data.empty:
+                errors = getattr(yf.shared, '_ERRORS', {})
+                logger.warning(f"⚠️ 本批次无数据: {chunk_tickers[0]}... 详情: {errors}")
+                
+                err_str = str(errors)
+                if "429" in err_str or "Too Many Requests" in err_str:
+                    raise Exception("Rate Limited (429)")
+                
+                return 
+
+            db_rows = []
+            
+            if isinstance(data.columns, pd.MultiIndex):
+                for symbol in chunk_tickers:
+                    try:
+                        df_symbol = data[symbol].dropna(how='all')
+                        if df_symbol.empty: continue
+                        
+                        df_symbol = df_symbol.reset_index()
+                        df_symbol.rename(columns={'Date': 'date'}, inplace=True)
+                        df_symbol['symbol'] = symbol
+                        df_symbol.columns = [c.lower().replace(' ', '_') for c in df_symbol.columns]
+                        db_rows.append(df_symbol)
+                    except KeyError:
+                        continue
+            else:
+                symbol = chunk_tickers[0]
+                df_symbol = data.dropna(how='all').reset_index()
+                df_symbol.rename(columns={'Date': 'date'}, inplace=True)
+                df_symbol['symbol'] = symbol
+                df_symbol.columns = [c.lower().replace(' ', '_') for c in df_symbol.columns]
+                db_rows.append(df_symbol)
+
+            if db_rows:
+                final_df = pd.concat(db_rows, ignore_index=True)
+                if 'date' in final_df.columns and 'symbol' in final_df.columns:
+                    final_df.to_sql(table_name, engine, if_exists='append', index=False)
+                    logger.info(f"✅ 入库成功: {len(db_rows)} 只股票")
+                else:
+                    logger.error("❌ 数据格式异常: 缺少 date 或 symbol")
+            
+            break 
+
+        except Exception as e:
+            if attempt < RETRIES - 1:
+                wait = RETRY_DELAY * (attempt + 1)
+                logger.warning(f"⚠️ 下载异常，{wait}秒后重试: {e}")
+                time.sleep(wait)
+            else:
+                logger.error(f"❌ 批次最终失败: {e}")
+
 def fetch_stock_data():
-    # 1. 检查配置文件
     if not os.path.exists(CONFIG_FILE):
         logger.warning(f"⚠️ 配置文件未找到: {CONFIG_FILE}")
         return
     
     try:
-        tickers = pd.read_csv(CONFIG_FILE, header=None)[0].astype(str).tolist()
+        raw = pd.read_csv(CONFIG_FILE, header=None)[0].astype(str).tolist()
+        tickers = sorted(list(set([x.strip().upper() for x in raw if x.strip()])))
     except Exception:
-        logger.warning("⚠️ 股票列表为空")
+        logger.warning("⚠️ 股票列表读取失败")
         return
 
-    logger.info(f"🚀 开始股票采集任务 (目标: {len(tickers)} 只)...")
+    logger.info(f"🐢 启动稳健采集任务 (总数: {len(tickers)} | 批次: {BATCH_SIZE})")
 
-    # 2. 【新增】执行自检
-    # 如果自检挂了，后面几千只股票就别试了，直接停机，防止封锁加重
-    if not check_yfinance_status():
-        logger.error("⛔ 自检失败，股票任务已取消。建议检查网络或更换 IP。")
-        return
-
-    # 3. 开始正式采集
     engine = get_engine()
     table_name = 'market_stocks_daily'
+    ensure_hypertable(table_name, 'date')
 
-    for i, symbol in enumerate(tickers):
-        symbol = symbol.strip().upper()
-        if not symbol: continue
-
-        # 进度条风格日志
-        logger.info(f"[{i+1}/{len(tickers)}] 获取 {symbol} ...")
+    for i in range(0, len(tickers), BATCH_SIZE):
+        chunk = tickers[i : i + BATCH_SIZE]
         
-        try:
-            # 调用 OpenBB 获取数据
-            df = obb.equity.price.historical(
-                symbol=symbol, 
-                provider='yfinance', 
-                interval='1d'
-            ).to_dataframe()
+        logger.info(f"🔄 [{i+1}/{len(tickers)}] 处理: {chunk[0]} ...")
+        
+        process_batch(chunk, engine, table_name)
+        
+        if i + BATCH_SIZE < len(tickers):
+            sleep_time = random.uniform(MIN_SLEEP, MAX_SLEEP)
+            logger.info(f"💤 休息 {sleep_time:.1f} 秒...")
+            time.sleep(sleep_time)
 
-            if df.empty:
-                logger.warning(f"⚠️ {symbol} 数据为空")
-                continue
-
-            # 清洗
-            df.index.name = 'date'
-            df.reset_index(inplace=True)
-            if 'symbol' not in df.columns:
-                df['symbol'] = symbol
-
-            # 入库
-            df.to_sql(table_name, engine, if_exists='append', index=False)
-            
-            # 为了性能，这里可以每隔 10 只做一次 hypertable check，或者只在最后做
-            # 但为了代码简单，暂时保持每次都做（开销很小，因为有 if_not_exists 判断）
-            ensure_hypertable(table_name, 'date')
-            
-            logger.info(f"✅ {symbol} 成功")
-            
-            # 防封休眠 (随机 2-5 秒)
-            time.sleep(random.uniform(2, 5))
-
-        except Exception as e:
-            err_str = str(e)
-            if "Rate limited" in err_str or "Too Many Requests" in err_str:
-                # 如果中途被封，休眠长一点
-                wait_time = random.randint(60, 120)
-                logger.error(f"❌ {symbol} 触发限流！强制休眠 {wait_time} 秒...")
-                time.sleep(wait_time) 
-            else:
-                logger.error(f"❌ {symbol} 失败: {e}")
-                time.sleep(1)
-
-    logger.info("🏁 股票任务全部结束")
+    logger.info("🏁 股票采集任务全部完成")

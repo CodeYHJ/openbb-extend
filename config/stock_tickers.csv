@@ -1,6 +1,5 @@
-symbol,provider
-AAPL,yfinance
-MSFT,yfinance
-GOOGL,yfinance
-TSLA,yfinance
-NVDA,yfinance
+AAPL
+MSFT
+GOOGL
+TSLA
+NVDA
