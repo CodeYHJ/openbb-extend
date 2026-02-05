@@ -1,216 +1,339 @@
 # Quant Headless Collector System Specification
 
-**版本**: 1.3.0 (Modular Expansion Edition)
-**日期**: 2026-02-04
-**核心定位**: 基于 OpenBB v4.6 的模块化、配置驱动型金融数据采集引擎。
+**版本**: 2.0.0 (Anti-Ban Optimization Edition)
+**日期**: 2025-02-05
+**核心定位**: 基于 yfinance 的防封禁、模块化、配置驱动型金融数据采集引擎。
 
-## 1. 项目概述 (Project Overview)
+## 1. 项目概述
 
-本项目构建一个单节点、无头模式（Headless）的数据采集系统。它通过 OpenBB 统一接口获取多资产类别（股票、宏观，未来包含加密货币等）数据，并持久化至 TimescaleDB。
+### 1.1 系统定位
+本项目构建一个单节点、无头模式（Headless）的数据采集系统。它通过 yfinance 和 FRED API 获取多资产类别（股票、宏观，未来包含加密货币等）数据，并持久化至 TimescaleDB。
 
-**核心设计理念**：
+### 1.2 核心设计理念
 
 1. **配置驱动 (Config-Driven)**: 采集什么股票、什么指标，由外部 CSV 文件控制，无需修改代码。
 2. **模块化 (Modular)**: 股票、宏观、加密货币各自独立为 Task 模块，互不干扰。
-3. **技术锁定 (Version Locked)**: 锁定 OpenBB v4.6.0 与 TimescaleDB (PG18)，确保十年稳定。
+3. **防封禁优先 (Anti-Ban First)**: 采用批量下载、单线程模式、长间隔休眠等策略，极大降低 IP 封禁风险。
+4. **技术锁定 (Version Locked)**: 锁定 Python 3.11 与 TimescaleDB (PG18)，确保十年稳定。
 
-## 2. 系统架构 (Architecture)
+### 1.3 功能概述
+- 股票数据采集：通过 yfinance 批量下载美股、港股等日线数据
+- 宏观数据采集：通过 FRED API 获取宏观经济指标
+- 数据持久化：存储至 TimescaleDB，自动分区
+- 定时调度：支持每日定时采集
 
+## 2. 系统架构
+
+### 2.1 架构图
 ```mermaid
 graph TD
-    subgraph "Control Center (Config)"
-        C1[stocks.csv]
-        C2[macro.csv]
-        C3[Future: crypto.csv]
+    subgraph "配置层"
+        C1[stock_tickers.csv<br/>无表头]
+        C2[macro_series.csv<br/>有表头]
+        C3[crypto.csv]
     end
 
-    subgraph "Collector Container"
-        Scheduler[Main Scheduler]
-        T1[Task: Stocks]
-        T2[Task: Macro]
-        OpenBB[OpenBB SDK v4.6]
+    subgraph "采集层"
+        Scheduler[调度器<br/>轻量级启动 + 连接检查]
+        T1[股票任务<br/>批量下载 + 重试 + 防封]
+        T2[宏观任务<br/>FRED API + 连接检查]
+        T3[加密货币任务<br/>扩展模块]
     end
 
-    subgraph "Storage Container"
-        DB[(TimescaleDB 2.25.0-pg18)]
+    subgraph "数据层"
+        DB[TimescaleDB<br/>Hypertable + 分区]
     end
 
     C1 --> T1
     C2 --> T2
+    C3 --> T3
     Scheduler --> T1
     Scheduler --> T2
-    T1 -->|Fetch| OpenBB
-    T2 -->|Fetch| OpenBB
-    OpenBB -->|Data| T1
-    OpenBB -->|Data| T2
-    T1 -->|Append SQL| DB
-    T2 -->|Append SQL| DB
-
+    Scheduler --> T3
+    T1 --> DB
+    T2 --> DB
+    T3 --> DB
 ```
 
-## 3. 目录结构 (Directory Structure)
+### 2.2 架构说明
+- **配置层**: 外部 CSV 配置文件，控制采集内容
+- **采集层**: 模块化任务，独立采集不同数据源
+- **数据层**: TimescaleDB 持久化存储，自动分区
+
+## 3. 目录结构
 
 ```text
 quant_headless/
-├── docker-compose.yml       # [基础设施] 服务编排
-├── Dockerfile               # [运行环境] OpenBB 统一镜像
-├── config/                  # [控制中心] 外部配置文件 (挂载)
-│   ├── stock_tickers.csv    # 股票代码列表 (如 AAPL, MSFT)
-│   └── macro_series.csv     # (可选) 宏观指标列表
-└── scripts/                 # [业务逻辑]
-    ├── main.py              # 调度总管
-    ├── database.py          # 数据库底层工具
-    └── tasks/               # [插件系统]
-        ├── __init__.py
-        ├── stocks.py        # 股票采集模块
-        └── macro.py         # 宏观采集模块
-
+ ├── docker-compose.yml       # Docker 编排文件
+ ├── Dockerfile               # 容器镜像定义
+ ├── config/                  # 配置文件目录（挂载到容器）
+ │   ├── stock_tickers.csv    # 股票代码配置
+ │   └── macro_series.csv     # 宏观指标配置
+ ├── db_data/                 # 数据持久化目录（挂载到容器）
+ └── scripts/                 # 业务逻辑目录
+     ├── main.py              # 调度器入口
+     ├── database.py          # 数据库连接与工具
+     └── tasks/               # 任务模块
+         ├── __init__.py
+         ├── stocks.py        # 股票采集任务
+         └── macro.py         # 宏观采集任务
 ```
 
----
+## 4. 核心功能需求
 
-## 4. 容器配置规范
+### 4.1 数据库工具功能需求
 
-### 4.1 采集器 (Collector)
+#### 4.1.1 连接池管理
+- 使用 SQLAlchemy 创建数据库连接池
+- 启用 `pool_pre_ping=True` 防止连接断开
+- 从环境变量读取连接信息
 
-* **基础镜像**: `python:3.11-slim-bookworm`
-* **核心库**: `openbb==4.6.0` (含 yfinance, fred, pandas 等全套依赖)
-* **关键配置**:
-```dockerfile
-# Dockerfile 核心片段
-ARG OPENBB_VERSION=4.6.0
-RUN pip install openbb==${OPENBB_VERSION} psycopg2-binary sqlalchemy schedule
-# 创建配置目录挂载点
-RUN mkdir -p /app/config
+#### 4.1.2 初始化功能 (`init_db_environment()`)
+- 创建 TimescaleDB 扩展 (如果不存在)
+- 确保数据库环境就绪
+- 初始化失败则退出程序
 
-```
+#### 4.1.3 超表转换功能 (`ensure_hypertable(table_name, time_col)`)
+- 将普通表转换为 Hypertable
+- 参数:
+  - `table_name`: 表名
+  - `time_col`: 时间列名 (默认 'date')
+- 功能:
+  - 如果表已是 Hypertable，不做处理
+  - 如果表已有数据，自动迁移数据到分区
+  - 失败时仅警告，不中断程序
 
+### 4.2 股票采集功能需求
 
+#### 4.2.1 配置文件格式
+- 路径: `/app/config/stock_tickers.csv`
+- 格式: 无表头，每行一个股票代码
+- 示例:
+  ```
+  AAPL
+  MSFT
+  GOOGL
+  ```
 
-### 4.2 数据库 (TimescaleDB)
+#### 4.2.2 启动连通性检查 (`check_yfinance_status()`)
+- 功能: 下载 SPY 1 天数据，验证连接状态
+- 返回: True (成功) / False (失败)
+- 超时: 3 秒
+- 错误处理: 捕获异常并记录日志
 
-* **镜像**: `timescale/timescaledb:2.25.0-pg18` (基于 PostgreSQL 18)
-* **资源限制**: `shm_size: 1g` (单机性能保障)
-* **网络**: 暴露 `5432` 端口供外部消费。
+#### 4.2.3 批量下载功能 (`fetch_stock_data()`)
+- 读取配置文件，获取股票列表
+- 去重、排序、清洗
+- 分批处理 (每批 20 只)
+- 调用 `process_batch()` 处理每批数据
 
-### 4.3 Docker Compose 配置
+#### 4.2.4 批次处理功能 (`process_batch(chunk_tickers, engine, table_name)`)
+- 输入:
+  - `chunk_tickers`: 股票代码列表 (长度 <= 20)
+  - `engine`: 数据库引擎
+  - `table_name`: 表名
 
-```yaml
-version: '3.8'
-services:
-  collector:
-    build: .
-    restart: unless-stopped
-    depends_on:
-      timescaledb:
-        condition: service_healthy
-    volumes:
-      - ./scripts:/app/scripts
-      - ./config:/app/config  <-- 关键挂载：配置热更新
-    environment:
-      - DB_HOST=timescaledb
-      - DB_NAME=quant_data
-      - DB_USER=postgres
-      - DB_PASS=quant_password
+- 下载逻辑:
+  - 使用 yfinance 下载数据
+  - 参数:
+    - `period="1d"`: 1 天数据
+    - `group_by='ticker'`: 按股票分组
+    - `auto_adjust=True`: 自动调整价格
+    - `progress=False`: 不显示进度条
+    - `threads=False`: 单线程模式
 
-  timescaledb:
-    image: timescale/timescaledb:2.25.0-pg18
-    shm_size: 1g
-    restart: unless-stopped
-    environment:
-      - POSTGRES_PASSWORD=quant_password
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      retries: 5
+- 重试机制:
+  - 重试次数: 3 次
+  - 重试延迟: 5秒 → 10秒 → 15秒 (递增)
+  - 错误识别: 自动识别 429 限流错误
+  - 错误详情: 记录 `yf.shared._ERRORS` 详细信息
 
-```
+- 批次间隔: 随机休眠 10-20 秒 (最后一批除外)
 
----
+#### 4.2.5 数据清洗与入库
+- 支持 MultiIndex (多只股票) 和 SingleIndex (单只股票) 格式
+- 标准化列名 (小写、下划线)
+- 添加 `symbol` 列
+- 重命名 `Date` 为 `date`
+- 去除空值
+- 批量入库 (使用 `to_sql`)
 
-## 5. 核心逻辑与扩展机制
+### 4.3 宏观采集功能需求
 
-### 5.1 通用数据库工具 (`database.py`)
+#### 4.3.1 API 连通性检查 (`test_fred_connectivity(api_key)`)
+- 功能: 下载 GDP 1 条数据，验证 API Key 有效性
+- 返回: True (成功) / False (失败)
+- 超时: 5 秒
+- 错误处理:
+  - 400: API Key 无效
+  - 403: 权限被拒绝
+  - 其他: 记录详细错误
 
-负责初始化 DB 连接池，并自动将所有新创建的表转换为 Hypertable。
+#### 4.3.2 配置
+- 环境变量: `FRED_API_KEY` (必填)
+- 配置文件: `/app/config/macro_series.csv` (可选，有表头)
+- 硬编码任务列表 (备选):
+  - CPI (CPIAUCSL): 消费者物价指数
+  - GDP (GDP): 国内生产总值
+  - UNRATE (UNRATE): 失业率
+  - FEDFUNDS (FEDFUNDS): 联邦基金利率
+  - M2 (M2SL): 货币供应量 M2
 
-### 5.2 任务模块化实现
+#### 4.3.3 数据采集功能 (`fetch_macro_data()`)
+- 调用 `test_fred_connectivity()` 检查连接
+- 如果检查失败，终止任务
+- 注入 OpenBB API Key
+- 遍历任务列表，采集每个指标
+- 使用 `obb.economy.fred_series()` 获取数据
+- 参数:
+  - `symbol`: 指标 ID
+  - `provider="fred"`
+  - `start_date="1950-01-01"` (获取历史数据)
 
-#### 模块 A: 股票采集 (`tasks/stocks.py`)
+#### 4.3.4 数据清洗与入库
+- 标准化列名 (将数值列重命名为 `value`)
+- 添加 `series_id` 列
+- 去除空值
+- 转换日期格式
+- 批量入库 (使用 `to_sql`)
 
-1. **读取配置**: 每次运行时读取 `/app/config/stock_tickers.csv`。
-2. **获取数据**: 调用 `obb.equity.price.historical(symbol="AAPL,MSFT...", provider="yfinance")`。
-3. **入库**: 存入表 `market_stocks_daily`。
+### 4.4 调度器功能需求
 
-#### 模块 B: 宏观采集 (`tasks/macro.py`)
+#### 4.4.1 启动流程
+- 记录启动信息 (OpenBB 版本、时间戳)
+- 初始化数据库环境 (`init_db_environment()`)
+- 注册定时任务:
+  - 股票采集: 每天 06:00 (`fetch_stock_data`)
+  - 宏观采集: 每天 08:00 (`fetch_macro_data`)
+- 打印任务计划表 (便于确认时区)
+- 执行启动前网络连通性检查:
+  - 调用 `check_yfinance_status()`
+  - 成功: 记录日志"系统就绪"
+  - 失败: 记录错误日志，但继续运行
+- 进入守护模式
 
-1. **读取配置**: (可选) 读取配置或硬编码关键指标。
-2. **获取数据**: 调用 `obb.economy.cpi(provider="fred")` 等接口。
-3. **入库**: 存入表 `macro_economic_data`。
+#### 4.4.2 守护模式
+- 每分钟检查一次待执行任务
+- 捕获 `KeyboardInterrupt` 异常，优雅退出
+- 捕获其他异常，记录详细堆栈 (`exc_info=True`)，休眠 60 秒后继续
 
-### 5.3 调度总管 (`main.py`)
+#### 4.4.3 日志配置
+- 级别: INFO
+- 格式: `时间 [级别] 模块: 消息`
+- 输出: 标准输出 (stdout)
 
-负责编排所有模块的运行时间。
+## 5. 接口规范
+
+### 5.1 数据库工具接口
 
 ```python
-# 伪代码逻辑
+def get_engine():
+    """返回数据库引擎实例"""
+    pass
+
+def init_db_environment():
+    """初始化数据库环境，确保 TimescaleDB 扩展已启用"""
+    pass
+
+def ensure_hypertable(table_name: str, time_col: str = 'date'):
+    """将表转换为 Hypertable，支持数据迁移"""
+    pass
+```
+
+### 5.2 股票采集接口
+
+```python
+def check_yfinance_status() -> bool:
+    """检查 Yahoo Finance 连接状态"""
+    pass
+
+def process_batch(chunk_tickers: List[str], engine, table_name: str):
+    """处理一个批次的股票数据"""
+    pass
+
+def fetch_stock_data():
+    """股票数据采集主入口"""
+    pass
+```
+
+### 5.3 宏观采集接口
+
+```python
+def test_fred_connectivity(api_key: str) -> bool:
+    """检查 FRED API 连接状态"""
+    pass
+
+def fetch_macro_data():
+    """宏观数据采集主入口"""
+    pass
+```
+
+### 5.4 调度器接口
+
+```python
 def run_scheduler():
-    init_db()
-    # 每天 06:00 跑股票
-    schedule.every().day.at("06:00").do(run_stock_task)
-    # 每天 08:00 跑宏观
-    schedule.every().day.at("08:00").do(run_macro_task)
-    
-    while True:
-        schedule.run_pending()
+    """调度器主入口"""
+    pass
 
+if __name__ == "__main__":
+    run_scheduler()
 ```
 
----
+## 6. 数据结构规范
 
-## 6. 使用与扩展指南 (Operation Guide)
+### 6.1 Hypertable 要求
 
-### 6.1 初始化与启动
+所有数据表必须转换为 Hypertable:
 
-1. 创建 `config/stock_tickers.csv`，填入你想抓取的代码（如 `NVDA`）。
-2. 运行命令：
-```bash
-docker-compose up -d --build
+1. **自动分区**:
+   - 按时间列自动分区
+   - 时间列名称: `date`
+   - 支持已有数据迁移到分区
 
-```
+2. **转换规则**:
+   - 首次写入时自动转换
+   - 支持重复调用 (幂等性)
+   - 失败时仅警告，不中断程序
 
+### 6.2 股票日线数据表 (`market_stocks_daily`)
 
+| 字段 | 类型 | 说明 | 约束 |
+|------|------|------|------|
+| `date` | DATE | 日期 | 主键部分 |
+| `symbol` | VARCHAR(20) | 股票代码 | 主键部分 |
+| `open` | NUMERIC | 开盘价 | 非空 |
+| `high` | NUMERIC | 最高价 | 非空 |
+| `low` | NUMERIC | 最低价 | 非空 |
+| `close` | NUMERIC | 收盘价 | 非空 |
+| `volume` | BIGINT | 成交量 | 非空 |
 
-### 6.2 如何调整抓取列表？
+**Hypertable 配置**:
+- 时间列: `date`
+- 分区间隔: 自动 (TimescaleDB 默认)
+- 更新频率: 每日 06:00
 
-* **操作**: 直接在本地编辑 `config/stock_tickers.csv`。
-* **生效**: 下次定时任务触发时（或重启容器后）自动生效。无需重新构建镜像。
+### 6.3 宏观经济数据表 (`macro_economic_data`)
 
-### 6.3 未来如何增加"加密货币"？
+| 字段 | 类型 | 说明 | 约束 |
+|------|------|------|------|
+| `date` | DATE | 日期 | 主键部分 |
+| `series_id` | VARCHAR(50) | 指标 ID | 主键部分 |
+| `value` | NUMERIC | 指标值 | 非空 |
 
-1. **配置**: 新建 `config/crypto.csv` (填入 `BTC-USD`)。
-2. **代码**: 复制 `tasks/stocks.py` 为 `tasks/crypto.py`，将 OpenBB 调用改为 `obb.crypto.price.historical`。
-3. **注册**: 在 `main.py` 中导入并添加 `schedule` 规则。
+**Hypertable 配置**:
+- 时间列: `date`
+- 分区间隔: 自动 (TimescaleDB 默认)
+- 更新频率: 每日 08:00
 
----
+### 6.4 加密货币日线数据表 (`market_crypto_daily`) (未来)
 
-## 7. 数据存储规范 (Schema)
+| 字段 | 类型 | 说明 | 约束 |
+|------|------|------|------|
+| `date` | TIMESTAMP | 时间戳 | 主键部分 |
+| `symbol` | VARCHAR(50) | 代币代码 | 主键部分 |
+| `close` | NUMERIC | 收盘价 | 非空 |
 
-所有数据表均由 TimescaleDB 管理，自动按时间分区。
-
-| 表名 | 描述 | 关键字段 | 更新频率 |
-| --- | --- | --- | --- |
-| `market_stocks_daily` | 全球股票日线 | `date`, `symbol`, `close`, `volume` | 每日 |
-| `macro_economic_data` | 宏观经济指标 | `date`, `value` (宽表结构) | 每日/每月 |
-| *(未来)* `market_crypto_daily` | 加密货币日线 | `date`, `symbol`, `close` | 每小时 |
-
----
-
-## 8. 交付物清单
-
-* [x] `docker-compose.yml` (配置完成)
-* [x] `Dockerfile` (锁定完成)
-* [x] `scripts/` 源码包 (模块化结构)
-* [x] `config/` 示例文件
+**Hypertable 配置**:
+- 时间列: `date`
+- 分区间隔: 自动 (TimescaleDB 默认)
+- 更新频率: 每小时
