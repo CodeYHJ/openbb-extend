@@ -78,12 +78,19 @@ graph TD
 │   └── DEPLOYMENT.md           # 部署指南
 ├── scripts/                    # 业务逻辑目录
 │   ├── __init__.py
-│   ├── main.py                 # 调度器入口/主程序
-│   ├── database.py             # 数据库连接池与工具
-│   └── tasks/                  # 采集任务模块
+│   ├── collector.py            # 【采集】调度器入口
+│   ├── database.py             # 【共享】数据库连接池与工具
+│   ├── tasks/                  # 【采集】采集任务模块
+│   │   ├── __init__.py
+│   │   ├── stocks.py           # 【采集】股票数据采集任务
+│   │   └── macro.py            # 【采集】宏观数据采集任务
+│   └── api/                    # 【API】数据查询 API 模块
 │       ├── __init__.py
-│       ├── stocks.py           # 股票数据采集任务
-│       └── macro.py            # 宏观数据采集任务
+│       ├── main.py             # 【API】FastAPI 入口
+│       └── routers/
+│           ├── __init__.py
+│           ├── macro.py        # 【API】宏观数据查询接口
+│           └── stocks.py       # 【API】股票数据查询接口
 └── README.md                   # 项目说明
 ```
 
@@ -91,10 +98,12 @@ graph TD
 
 | 模块 | 职责 | 关键函数/类 |
 |------|------|------------|
-| `main.py` | 调度器入口，启动采集任务 | `main()` |
+| `main.py` | 【统一】服务入口，启动采集+API | `main()` |
 | `database.py` | 数据库连接管理与 Hypertable 工具 | `get_engine()`, `ensure_hypertable()` |
 | `tasks/stocks.py` | 股票数据采集 | `fetch_stock_data()` |
 | `tasks/macro.py` | 宏观数据采集 | `fetch_macro_data()`, `init_macro_table()` |
+| `api/main.py` | 【API】数据查询服务入口 | FastAPI App |
+| `api/routers/` | 数据查询接口 | `macro.py`, `stocks.py` |
 
 ## 4. 核心功能需求
 
@@ -295,6 +304,33 @@ def run_scheduler():
 if __name__ == "__main__":
     run_scheduler()
 ```
+
+### 5.5 数据查询 API 接口
+
+**启动方式**:
+```bash
+uvicorn scripts.api.main:app --host 0.0.0.0 --port 8000
+```
+
+**接口列表**:
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/` | 服务信息 |
+| GET | `/health` | 健康检查 |
+| GET | `/macro/indicators` | 获取宏观指标列表 |
+| GET | `/macro/data` | 查询宏观指标历史数据 |
+| GET | `/macro/data/latest` | 获取宏观指标最新数据 |
+| GET | `/stocks/symbols` | 获取股票代码列表 |
+| GET | `/stocks/data` | 查询股票历史数据 |
+| GET | `/stocks/data/latest` | 获取股票最新数据 |
+
+**通用参数**:
+- `start_date`: 开始日期 (YYYY-MM-DD)
+- `end_date`: 结束日期 (YYYY-MM-DD)
+- `limit`: 返回条数限制 (默认 1000, 最大 10000)
+
+**文档地址**: `http://localhost:8000/docs`
 
 ## 6. 数据结构规范
 

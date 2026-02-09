@@ -54,3 +54,24 @@ def ensure_hypertable(table_name, time_col='date'):
             pass # 已经是了，忽略
         else:
             logger.warning(f"⚠️ Hypertable 检查 ({table_name}): {e}")
+
+
+def has_data(table_name: str) -> bool:
+    """
+    检查指定表是否有数据
+    
+    Returns:
+        bool: 有数据返回 True，否则返回 False
+    """
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text(f"SELECT COUNT(*) FROM {table_name} LIMIT 1"))
+            count = result.scalar()
+            return count > 0
+    except Exception as e:
+        # 表不存在视为无数据
+        err_str = str(e)
+        if "does not exist" in err_str or "UndefinedTable" in err_str:
+            return False
+        logger.warning(f"⚠️ 检查表数据失败 ({table_name}): {e}")
+        return False

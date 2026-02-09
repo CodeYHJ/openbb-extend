@@ -84,10 +84,15 @@ def delete_existing_data(engine, series_id, start_date, end_date):
         raise
 
 
-def test_fred_connectivity(api_key):
+def test_fred_connectivity(api_key, max_retries=3, retry_delay=5):
     """
-    🔍 连通性测试函数
+    🔍 连通性测试函数（带重试）
     直接访问 FRED API 一个极小的请求，验证 Key 和网络是否正常
+    
+    Args:
+        api_key: FRED API Key
+        max_retries: 最大重试次数（针对 502/503 等服务器错误）
+        retry_delay: 重试间隔（秒）
     """
     test_url = "https://api.stlouisfed.org/fred/series/observations"
     params = {
@@ -97,25 +102,46 @@ def test_fred_connectivity(api_key):
         "limit": 1
     }
     
-    try:
-        response = requests.get(test_url, params=params, timeout=5)
-        
-        if response.status_code == 200:
-            logger.info("✅ [自检] FRED API 连接成功！Key 有效。")
-            return True
-        elif response.status_code == 400:
-            logger.error(f"❌ [自检] API Key 无效或参数错误: {response.text}")
-            return False
-        elif response.status_code == 403:
-            logger.error(f"❌ [自检] 权限被拒绝 (可能是 IP 被封): {response.text}")
-            return False
-        else:
-            logger.error(f"❌ [自检] 未知错误 (Code {response.status_code}): {response.text}")
-            return False
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(test_url, params=params, timeout=10)
             
-    except Exception as e:
-        logger.error(f"❌ [自检] 网络连接失败 (DNS/防火墙?): {str(e)}")
-        return False
+            if response.status_code == 200:
+                logger.info("✅ [自检] FRED API 连接成功！Key 有效。")
+                return True
+            elif response.status_code == 400:
+                logger.error(f"❌ [自检] API Key 无效或参数错误: {response.text}")
+                return False
+            elif response.status_code == 403:
+                logger.error(f"❌ [自检] 权限被拒绝 (可能是 IP 被封): {response.text}")
+                return False
+            elif response.status_code in (502, 503, 504):
+                # 服务器错误，需要重试
+                if attempt < max_retries - 1:
+                    logger.warning(f"⚠️ [自检] FRED API 服务暂时不可用 (Code {response.status_code})，{retry_delay}秒后重试...")
+                    import time
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    logger.error(f"❌ [自检] FRED API 服务持续不可用 (Code {response.status_code})")
+                    return False
+            else:
+                logger.error(f"❌ [自检] 未知错误 (Code {response.status_code}): {response.text}")
+                return False
+                
+        except requests.exceptions.Timeout:
+            if attempt < max_retries - 1:
+                logger.warning(f"⚠️ [自检] 连接超时，{retry_delay}秒后重试...")
+                import time
+                time.sleep(retry_delay)
+            else:
+                logger.error(f"❌ [自检] 连接超时，已达到最大重试次数")
+                return False
+        except Exception as e:
+            logger.error(f"❌ [自检] 网络连接失败 (DNS/防火墙?): {str(e)}")
+            return False
+    
+    return False
 
 
 def fetch_macro_data():

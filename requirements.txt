@@ -2,3 +2,5 @@ openbb==4.6.0
 psycopg2-binary
 sqlalchemy
 schedule
+fastapi
+uvicorn
