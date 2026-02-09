@@ -26,14 +26,15 @@ TABLE_NAME = 'macro_economic_data'
 
 def init_macro_table(engine):
     """初始化宏观数据表结构"""
+    # 使用 TEXT 类型（TimescaleDB 最佳实践）
     create_table_sql = f"""
     CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
         date DATE NOT NULL,
-        series_id VARCHAR(20) NOT NULL,
-        indicator_name VARCHAR(100),
+        series_id TEXT NOT NULL,
+        indicator_name TEXT,
         value NUMERIC,
-        frequency VARCHAR(50),
-        provider VARCHAR(20) DEFAULT 'fred',
+        frequency TEXT,
+        provider TEXT DEFAULT 'fred',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (date, series_id)
     );
