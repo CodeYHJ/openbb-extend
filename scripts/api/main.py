@@ -2,7 +2,9 @@
 数据读取 API 入口
 仅提供查询功能，不提供写入/修改
 """
+import os
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 from contextlib import asynccontextmanager
 
 from scripts.api.routers import macro, stocks
@@ -52,3 +54,29 @@ async def root():
 async def health_check():
     """健康检查端点"""
     return {"status": "ok", "api_version": "v1"}
+
+
+@app.get("/chart", response_class=HTMLResponse)
+async def get_chart_page():
+    """
+    数据可视化图表页面
+    
+    返回宏观数据折线图可视化界面
+    """
+    # 获取项目根目录下的 static/charts.html 文件路径
+    current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    html_path = os.path.join(current_dir, "static", "charts.html")
+    
+    # 如果找不到，尝试当前工作目录
+    if not os.path.exists(html_path):
+        html_path = os.path.join("static", "charts.html")
+    
+    try:
+        with open(html_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return content
+    except FileNotFoundError:
+        return HTMLResponse(
+            content="<html><body><h1>static/charts.html not found</h1></body></html>",
+            status_code=404
+        )

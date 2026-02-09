@@ -78,7 +78,7 @@ graph TD
 │   └── DEPLOYMENT.md           # 部署指南
 ├── scripts/                    # 业务逻辑目录
 │   ├── __init__.py
-│   ├── collector.py            # 【采集】调度器入口
+│   ├── main.py                 # 【统一】服务入口
 │   ├── database.py             # 【共享】数据库连接池与工具
 │   ├── tasks/                  # 【采集】采集任务模块
 │   │   ├── __init__.py
@@ -91,6 +91,8 @@ graph TD
 │           ├── __init__.py
 │           ├── macro.py        # 【API】宏观数据查询接口
 │           └── stocks.py       # 【API】股票数据查询接口
+├── static/                     # 【静态文件】可视化图表等
+│   └── charts.html             # 宏观数据可视化页面
 └── README.md                   # 项目说明
 ```
 
@@ -317,6 +319,7 @@ uvicorn scripts.api.main:app --host 0.0.0.0 --port 8000
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/` | 服务信息 |
+| GET | `/chart` | 数据可视化图表页面（HTML） |
 | GET | `/api/v1/health` | 健康检查 |
 | GET | `/api/v1/macro/indicators` | 获取宏观指标列表 |
 | GET | `/api/v1/macro/data` | 查询宏观指标历史数据 |
