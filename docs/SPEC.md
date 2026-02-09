@@ -60,24 +60,41 @@ graph TD
 - **采集层**: 模块化任务，独立采集不同数据源
 - **数据层**: TimescaleDB 持久化存储，自动分区
 
-## 3. 目录结构
+## 3. 项目架构
+
+### 3.1 目录结构
 
 ```text
-quant_headless/
- ├── docker-compose.yml       # Docker 编排文件
- ├── Dockerfile               # 容器镜像定义
- ├── config/                  # 配置文件目录（挂载到容器）
- │   ├── stock_tickers.csv    # 股票代码配置
- │   └── macro_series.csv     # 宏观指标配置
- ├── db_data/                 # 数据持久化目录（挂载到容器）
- └── scripts/                 # 业务逻辑目录
-     ├── main.py              # 调度器入口
-     ├── database.py          # 数据库连接与工具
-     └── tasks/               # 任务模块
-         ├── __init__.py
-         ├── stocks.py        # 股票采集任务
-         └── macro.py         # 宏观采集任务
+/workspace/code/openbb-extend/
+├── docker-compose.yml          # Docker 编排文件
+├── Dockerfile                  # 容器镜像定义
+├── requirements.txt            # Python 依赖
+├── config/                     # 配置文件目录（挂载卷）
+│   ├── stock_tickers.csv       # 股票代码列表
+│   └── macro_series.csv        # 宏观指标 Series ID 列表
+├── db_data/                    # 数据库数据持久化（挂载卷，gitignore）
+├── docs/                       # 文档目录
+│   ├── SPEC.md                 # 系统规格说明书
+│   └── DEPLOYMENT.md           # 部署指南
+├── scripts/                    # 业务逻辑目录
+│   ├── __init__.py
+│   ├── main.py                 # 调度器入口/主程序
+│   ├── database.py             # 数据库连接池与工具
+│   └── tasks/                  # 采集任务模块
+│       ├── __init__.py
+│       ├── stocks.py           # 股票数据采集任务
+│       └── macro.py            # 宏观数据采集任务
+└── README.md                   # 项目说明
 ```
+
+### 3.2 模块职责
+
+| 模块 | 职责 | 关键函数/类 |
+|------|------|------------|
+| `main.py` | 调度器入口，启动采集任务 | `main()` |
+| `database.py` | 数据库连接管理与 Hypertable 工具 | `get_engine()`, `ensure_hypertable()` |
+| `tasks/stocks.py` | 股票数据采集 | `fetch_stock_data()` |
+| `tasks/macro.py` | 宏观数据采集 | `fetch_macro_data()`, `init_macro_table()` |
 
 ## 4. 核心功能需求
 
