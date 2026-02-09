@@ -317,13 +317,13 @@ uvicorn scripts.api.main:app --host 0.0.0.0 --port 8000
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/` | 服务信息 |
-| GET | `/health` | 健康检查 |
-| GET | `/macro/indicators` | 获取宏观指标列表 |
-| GET | `/macro/data` | 查询宏观指标历史数据 |
-| GET | `/macro/data/latest` | 获取宏观指标最新数据 |
-| GET | `/stocks/symbols` | 获取股票代码列表 |
-| GET | `/stocks/data` | 查询股票历史数据 |
-| GET | `/stocks/data/latest` | 获取股票最新数据 |
+| GET | `/api/v1/health` | 健康检查 |
+| GET | `/api/v1/macro/indicators` | 获取宏观指标列表 |
+| GET | `/api/v1/macro/data` | 查询宏观指标历史数据 |
+| GET | `/api/v1/macro/data/latest` | 获取宏观指标最新数据 |
+| GET | `/api/v1/stocks/symbols` | 获取股票代码列表 |
+| GET | `/api/v1/stocks/data` | 查询股票历史数据 |
+| GET | `/api/v1/stocks/data/latest` | 获取股票最新数据 |
 
 **通用参数**:
 - `start_date`: 开始日期 (YYYY-MM-DD)

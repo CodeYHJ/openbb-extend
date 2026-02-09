@@ -25,23 +25,30 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# 注册路由
-app.include_router(macro.router, prefix="/macro", tags=["宏观数据"])
-app.include_router(stocks.router, prefix="/stocks", tags=["股票数据"])
+# API 版本前缀
+API_PREFIX = "/api/v1"
+
+# 注册路由（带版本前缀）
+app.include_router(macro.router, prefix=f"{API_PREFIX}/macro", tags=["宏观数据"])
+app.include_router(stocks.router, prefix=f"{API_PREFIX}/stocks", tags=["股票数据"])
 
 
 @app.get("/")
 async def root():
+    """根路径重定向到文档"""
     return {
         "message": "Quant Data API",
         "docs": "/docs",
+        "api_base": API_PREFIX,
         "endpoints": {
-            "宏观数据": "/macro",
-            "股票数据": "/stocks"
+            "宏观数据": f"{API_PREFIX}/macro",
+            "股票数据": f"{API_PREFIX}/stocks",
+            "健康检查": f"{API_PREFIX}/health"
         }
     }
 
 
-@app.get("/health")
+@app.get(f"{API_PREFIX}/health")
 async def health_check():
-    return {"status": "ok"}
+    """健康检查端点"""
+    return {"status": "ok", "api_version": "v1"}
