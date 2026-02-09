@@ -317,13 +317,23 @@ if __name__ == "__main__":
 | 字段 | 类型 | 说明 | 约束 |
 |------|------|------|------|
 | `date` | DATE | 日期 | 主键部分 |
-| `series_id` | VARCHAR(50) | 指标 ID | 主键部分 |
+| `series_id` | VARCHAR(20) | 指标 ID (如 WALCL) | 主键部分 |
+| `indicator_name` | VARCHAR(100) | 指标中文名称 | - |
 | `value` | NUMERIC | 指标值 | 非空 |
+| `frequency` | VARCHAR(50) | 数据频率 | - |
+| `provider` | VARCHAR(20) | 数据来源 | 默认 'fred' |
+| `created_at` | TIMESTAMP | 入库时间 | 默认 CURRENT_TIMESTAMP |
+
+**索引**:
+- `idx_macro_economic_data_series_id` ON `series_id`
 
 **Hypertable 配置**:
 - 时间列: `date`
 - 分区间隔: 自动 (TimescaleDB 默认)
 - 更新频率: 每日 08:00
+
+**去重策略**:
+- 入库前先删除该指标在日期范围内的旧数据，再插入新数据
 
 ### 6.4 加密货币日线数据表 (`market_crypto_daily`) (未来)
 
